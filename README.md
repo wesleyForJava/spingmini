@@ -24,5 +24,5 @@ MVC
 11、调用doPost()/doGet()
 12、匹配HandlerMapping
 13、反射调用method.invoker()
-13、response.getWriter().write()
+14、response.getWriter().write()
 ```
