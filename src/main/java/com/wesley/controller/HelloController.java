@@ -27,8 +27,24 @@ public class HelloController {
             e.printStackTrace();
         }
     }
-
-
+    @WesRequestMapping("/add")
+    public void add(HttpServletRequest request, HttpServletResponse response,
+                    @WesRequestParam("first")Integer first,@WesRequestParam("second")Integer second){
+        try {
+            response.getWriter().write(first+"+"+second+"="+(first+second));
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+    @WesRequestMapping("/sub")
+    public void sub(HttpServletRequest request, HttpServletResponse response,
+                    @WesRequestParam("first")Integer first,@WesRequestParam("second")Integer second){
+        try {
+            response.getWriter().write(first+"-"+second+"="+(first-second));
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
 
 
 }

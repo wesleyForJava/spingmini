@@ -17,7 +17,7 @@ import java.lang.reflect.Method;
 import java.net.URL;
 import java.util.*;
 
-public class WesDispatcherServlet extends HttpServlet {
+public class WesDispatcherServlet2 extends HttpServlet {
 
    private  Properties contextCofig=new Properties();
    //保存所有扫描到的类名
@@ -25,8 +25,11 @@ public class WesDispatcherServlet extends HttpServlet {
     //IOC容器
     private  Map<String,Object> ioc=new HashMap<String,Object>();
 
+
     //HandlerMapping容器 保存url和Mehtod的对应关系
-    private Map<String,Method> handlerMappings=new HashMap<>();
+//    private Map<String,Method> handlerMappings=new HashMap<>();
+
+    private List<HandlerMapping> handlerMappings=new ArrayList<HandlerMapping>();
 
 
     @Override
@@ -46,14 +49,11 @@ public class WesDispatcherServlet extends HttpServlet {
     }
 
     private void doDispatch(HttpServletRequest req, HttpServletResponse resp) {
-        //绝对路径
-        String url = req.getRequestURI();
-        //处理成相对路径
-        String contextPath = req.getContextPath();
 
-        url= url.replaceAll(contextPath,"").replaceAll("/+","/");
 
-        if(!this.handlerMappings.containsKey(url)){
+       HandlerMapping handlerMapping= getHandler(req);
+
+        if(handlerMapping==null){
             try {
                 resp.getWriter().write("404 找到路径...");
                 return;
@@ -62,60 +62,48 @@ public class WesDispatcherServlet extends HttpServlet {
             }
         }
 
-        Method method = this.handlerMappings.get(url);
+        //获得方法的形参列表
+        Class<?>[] parameterTypes = handlerMapping.getParameterTypes();
 
+       //参数赋值列表
+        Object [] paramValues=new Object[parameterTypes.length];
 
-        Map<String, String[]> parameterMap = req.getParameterMap();
+        Map<String,String[]> params=req.getParameterMap();
+        for (Map.Entry<String, String[]> param : params.entrySet()) {
+            String value= Arrays.toString(param.getValue()).replaceAll("\\[|\\]","")
+                    .replaceAll("\\s+",",");
+            if(!handlerMapping.parameterIndexMapping.containsKey(param.getKey())){continue;}
 
-        //获取方法的形参列表
-        Class<?>[] parameterTypes = method.getParameterTypes();
-
-        Object[] paramValues = new Object[parameterTypes.length];
-
-        for (int i = 0; i <parameterTypes.length ; i++) {
-            Class<?> parameterType = parameterTypes[i];
-            //不能用instanceof，parameterType它不是实参而是形参
-            if(parameterType==HttpServletRequest.class){
-                paramValues[i]=req;
-                continue;
-            }else if(parameterType==HttpServletResponse.class){
-                paramValues[i]=resp;
-                continue;
-            }
-//            else if(parameterType==String.class){
-                WesRequestParam wesRequestParam = parameterType.getAnnotation(WesRequestParam.class);
-                Annotation[][] pa = method.getParameterAnnotations();
-                for (int j = 0; j < pa.length; j++) {
-                    for (Annotation annotation : pa[j]) {
-                        if (annotation instanceof WesRequestParam){
-                            String paramName = ((WesRequestParam) annotation).value();
-                            if(parameterMap.containsKey(paramName)){
-                                for (Map.Entry<String, String[]> param : parameterMap.entrySet()) {
-                                    //TODO 参数定位需要改进
-                                    paramValues[i] = convert(parameterType, Arrays.toString(param.getValue()));
-                                }
-                        }
-                    }
-                }
-                }
-//            }
-
-
+            int index = handlerMapping.parameterIndexMapping.get(param.getKey());
+            paramValues[index]=convert(parameterTypes[index],value);
         }
-        //投机取巧的方式
-        //通过放射拿到method所在的class，拿到class后还是拿到class的名称
-        //用toLowerFristCase获得beanName
-        String beanName = toLowerFirstCase(method.getDeclaringClass().getSimpleName());
-
+        Integer respindex = handlerMapping.getParameterIndexMapping().get(HttpServletResponse.class.getName());
+        paramValues[respindex]=resp;
+        Integer repindex = handlerMapping.getParameterIndexMapping().get(HttpServletRequest.class.getName());
+        paramValues[repindex]=req;
         try {
-            method.invoke(ioc.get(beanName),paramValues);
+            handlerMapping.method.invoke(handlerMapping.contoller,paramValues);
         } catch (IllegalAccessException e) {
             e.printStackTrace();
         } catch (InvocationTargetException e) {
             e.printStackTrace();
         }
+    }
 
+    private HandlerMapping getHandler(HttpServletRequest req) {
+         if(handlerMappings.isEmpty()) return  null;
+        //绝对路径
+        String url = req.getRequestURI();
+        //处理成相对路径
+        String contextPath = req.getContextPath();
 
+        url= url.replaceAll(contextPath,"").replaceAll("/+","/");
+        for (HandlerMapping handlerMapping : this.handlerMappings) {
+           if(handlerMapping.getUrl().equals(url)){
+                return handlerMapping;
+            }
+        }
+        return null;
     }
 
     //url传过来的参数都是String类型的，http是基于字符串协议
@@ -126,6 +114,8 @@ public class WesDispatcherServlet extends HttpServlet {
         }else if(String.class==type){
             return value.replaceAll("\\[|\\]","")
                     .replaceAll("\\s+",",");
+        }else if(Double.class==type){
+            return  Double.valueOf(value);
         }
         return value;
     }
@@ -199,7 +189,8 @@ public class WesDispatcherServlet extends HttpServlet {
                 WesRequestMapping wesRequestMapping = method.getAnnotation(WesRequestMapping.class);
                 String url =(baseUrl+"/"+wesRequestMapping.value())
                         .replaceAll("/+","/");
-                handlerMappings.put(url,method);
+              //  handlerMappings.put(url,method);
+                this.handlerMappings.add(new HandlerMapping(url,method,entry.getValue()));
                 System.out.println("Mapped"+url+":"+method);
             }
 
@@ -318,4 +309,87 @@ public class WesDispatcherServlet extends HttpServlet {
         }
 
     }
+    public class HandlerMapping{
+         private String url;
+         private Method method;
+         private Object contoller;
+         private Class<?> []parameterTypes;
+
+         //形参列表
+        //参数的名字作为key，参数的顺序作为值。
+         private Map<String,Integer> parameterIndexMapping;
+
+        public HandlerMapping(String url, Method method, Object contoller) {
+            this.url = url;
+            this.method = method;
+            this.contoller = contoller;
+            this.parameterTypes=method.getParameterTypes();
+            this.parameterIndexMapping = new HashMap<>();
+            putParamIndexMapping(method);
+        }
+
+
+
+
+
+        private void putParamIndexMapping(Method method) {
+            Annotation[][] pa = method.getParameterAnnotations();
+            for (int i = 0; i < pa.length; i++) {
+                for (Annotation annotation : pa[i]) {
+                    if (annotation instanceof WesRequestParam){
+                        String paramName = ((WesRequestParam) annotation).value();
+                        if(!"".equals(paramName.trim())){
+                            parameterIndexMapping.put(paramName,i);
+                        }
+                    }
+                }
+            }
+            //提取方法种的request和response参数
+            Class<?>[] parameterTypes = method.getParameterTypes();
+            for (int i = 0; i < parameterTypes.length; i++) {
+                Class<?> parameterType = parameterTypes[i];
+                if(parameterType.equals(HttpServletRequest.class)
+                        || parameterType.equals(HttpServletResponse.class)){
+                    parameterIndexMapping.put(parameterType.getName(),i);
+                }
+            }
+        }
+
+        public void setUrl(String url) {
+            this.url = url;
+        }
+
+        public void setMethod(Method method) {
+            this.method = method;
+        }
+
+        public void setContoller(Object contoller) {
+            this.contoller = contoller;
+        }
+
+        public void setParameterIndexMapping(Map<String, Integer> parameterIndexMapping) {
+            this.parameterIndexMapping = parameterIndexMapping;
+        }
+
+        public String getUrl() {
+            return url;
+        }
+
+        public Method getMethod() {
+            return method;
+        }
+
+        public Object getContoller() {
+            return contoller;
+        }
+
+        public Map<String, Integer> getParameterIndexMapping() {
+            return parameterIndexMapping;
+        }
+
+        public Class<?>[] getParameterTypes() {
+            return parameterTypes;
+        }
+    }
+
 }
